@@ -1,18 +1,16 @@
-from transformers import pipeline
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 print("Loading translation models... Please wait.")
 
-# Hindi translator
-translator_hi = pipeline(
-    task="translation_en_to_hi",
-    model="Helsinki-NLP/opus-mt-en-hi"
-)
+# Hindi model
+model_hi_name = "Helsinki-NLP/opus-mt-en-hi"
+tokenizer_hi = AutoTokenizer.from_pretrained(model_hi_name)
+model_hi = AutoModelForSeq2SeqLM.from_pretrained(model_hi_name)
 
-# Telugu translator using multilingual model
-translator_te = pipeline(
-    task="translation_en_to_te",
-    model="Helsinki-NLP/opus-mt-en-mul"
-)
+# Multilingual model for Telugu
+model_te_name = "Helsinki-NLP/opus-mt-en-mul"
+tokenizer_te = AutoTokenizer.from_pretrained(model_te_name)
+model_te = AutoModelForSeq2SeqLM.from_pretrained(model_te_name)
 
 print("Translation models loaded successfully.")
 
@@ -20,12 +18,20 @@ print("Translation models loaded successfully.")
 def translate(text, language):
 
     if language == "Hindi":
-        result = translator_hi(text)
-        return result[0]['translation_text']
+
+        inputs = tokenizer_hi(text, return_tensors="pt", padding=True)
+        outputs = model_hi.generate(**inputs)
+        translated = tokenizer_hi.decode(outputs[0], skip_special_tokens=True)
+        return translated
+
 
     elif language == "Telugu":
-        result = translator_te(text)
-        return result[0]['translation_text']
+
+        inputs = tokenizer_te(text, return_tensors="pt", padding=True)
+        outputs = model_te.generate(**inputs)
+        translated = tokenizer_te.decode(outputs[0], skip_special_tokens=True)
+        return translated
+
 
     else:
         return text
