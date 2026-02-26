@@ -1,61 +1,107 @@
 import streamlit as st
 import numpy as np
-from PIL import Image
-import pickle
 import tensorflow as tf
-from tensorflow.keras.applications.inception_v3 import InceptionV3, preprocess_input
-from tensorflow.keras.models import Model, load_model
+import pickle
+import os
+import gdown
+import zipfile
+from PIL import Image
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from translator import translate
+from tensorflow.keras.applications.inception_v3 import InceptionV3, preprocess_input
+from tensorflow.keras.models import Model
+from transformers import pipeline
 
-# Page config
-st.set_page_config(page_title="Multilingual Image Captioning", layout="centered")
+# =========================
+# Download models from Google Drive
+# =========================
 
-st.title("Multilingual Image Captioning System")
-st.write("Upload an image to generate captions in English, Hindi, and Telugu")
+def download_models():
 
+    if not os.path.exists("models"):
+        os.makedirs("models")
+
+    # change file id if needed
+    file_id = "1gOvW_z0Nr-fX4bZt7Nb7xkvmfuqKxRmy"
+    zip_path = "models/models.zip"
+
+    if not os.path.exists("models/tokenizer.pkl"):
+
+        st.write("Downloading model files...")
+
+        url = f"https://drive.google.com/uc?id={file_id}"
+        gdown.download(url, zip_path, quiet=False)
+
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall("models")
+
+        st.write("Models downloaded successfully")
+
+
+download_models()
+
+# =========================
 # Load tokenizer
+# =========================
+
 @st.cache_resource
 def load_tokenizer():
+
     with open("models/tokenizer.pkl", "rb") as f:
         tokenizer = pickle.load(f)
+
     return tokenizer
 
-# Load model
+
+# =========================
+# Load caption model
+# =========================
+
 @st.cache_resource
 def load_caption_model():
-    model = load_model("models/caption_model.h5")
+
+    model = tf.keras.models.load_model("models/caption_model.h5")
+
     return model
 
+
+# =========================
 # Load feature extractor
+# =========================
+
 @st.cache_resource
 def load_feature_extractor():
+
     base_model = InceptionV3(weights="imagenet")
     model = Model(base_model.input, base_model.layers[-2].output)
+
     return model
 
-tokenizer = load_tokenizer()
-caption_model = load_caption_model()
-feature_extractor = load_feature_extractor()
 
-max_length = 34
+# =========================
+# Translation models
+# =========================
 
-# Extract features
-def extract_features(image):
-    image = image.resize((299, 299))
-    image = np.array(image)
+@st.cache_resource
+def load_translators():
 
-    if image.shape[-1] == 4:
-        image = image[:, :, :3]
+    translator_hi = pipeline(
+        "translation_en_to_hi",
+        model="Helsinki-NLP/opus-mt-en-hi"
+    )
 
-    image = np.expand_dims(image, axis=0)
-    image = preprocess_input(image)
+    translator_te = pipeline(
+        "translation",
+        model="Helsinki-NLP/opus-mt-en-mul"
+    )
 
-    features = feature_extractor.predict(image, verbose=0)
-    return features
+    return translator_hi, translator_te
 
-# Generate caption
-def generate_caption(model, tokenizer, photo, max_length):
+
+# =========================
+# Caption generation function
+# =========================
+
+def generate_caption(model, tokenizer, photo, max_length=34):
 
     in_text = "startseq"
 
@@ -77,11 +123,54 @@ def generate_caption(model, tokenizer, photo, max_length):
         if word == "endseq":
             break
 
-    final_caption = in_text.replace("startseq", "").replace("endseq", "")
-    return final_caption.strip()
+    final = in_text.replace("startseq", "").replace("endseq", "")
 
-# Upload image
+    return final.strip()
+
+
+# =========================
+# Extract image features
+# =========================
+
+def extract_features(image, model):
+
+    image = image.resize((299, 299))
+    image = np.array(image)
+
+    if image.shape[-1] == 4:
+        image = image[..., :3]
+
+    image = np.expand_dims(image, axis=0)
+    image = preprocess_input(image)
+
+    feature = model.predict(image, verbose=0)
+
+    return feature
+
+
+# =========================
+# Translate function
+# =========================
+
+def translate(text, translator_hi, translator_te):
+
+    hindi = translator_hi(text)[0]["translation_text"]
+
+    telugu = translator_te(text)[0]["translation_text"]
+
+    return hindi, telugu
+
+
+# =========================
+# Streamlit UI
+# =========================
+
+st.title("Multilingual Image Captioning System")
+
+st.write("Upload an image to generate captions in English, Hindi, and Telugu")
+
 uploaded_file = st.file_uploader("Choose an image", type=["jpg", "jpeg", "png"])
+
 
 if uploaded_file is not None:
 
@@ -89,27 +178,26 @@ if uploaded_file is not None:
 
     st.image(image, caption="Uploaded Image", use_column_width=True)
 
-    with st.spinner("Generating caption..."):
+    tokenizer = load_tokenizer()
+    caption_model = load_caption_model()
+    feature_model = load_feature_extractor()
+    translator_hi, translator_te = load_translators()
 
-        features = extract_features(image)
+    feature = extract_features(image, feature_model)
 
-        english_caption = generate_caption(
-            caption_model,
-            tokenizer,
-            features,
-            max_length
-        )
+    english_caption = generate_caption(caption_model, tokenizer, feature)
 
-        hindi_caption = translate(english_caption, "Hindi")
-        telugu_caption = translate(english_caption, "Telugu")
+    hindi_caption, telugu_caption = translate(
+        english_caption,
+        translator_hi,
+        translator_te
+    )
 
-    st.success("Caption generated successfully!")
-
-    st.subheader("English")
+    st.subheader("English Caption:")
     st.write(english_caption)
 
-    st.subheader("Hindi")
+    st.subheader("Hindi Caption:")
     st.write(hindi_caption)
 
-    st.subheader("Telugu")
+    st.subheader("Telugu Caption:")
     st.write(telugu_caption)
