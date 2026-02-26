@@ -1,7 +1,8 @@
-streamlit
-tensorflow==2.15.0
+streamlit==1.32.0
+tensorflow==2.20.0
 numpy
 pillow
 transformers==4.41.2
 sentencepiece
 gdown
+h5py
