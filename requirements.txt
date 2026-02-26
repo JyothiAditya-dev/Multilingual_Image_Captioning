@@ -1,9 +1,7 @@
-streamlit==1.54.0
-tensorflow==2.20.0
+streamlit
+tensorflow-cpu==2.15.0
 numpy
 pillow
 transformers
-torch
-torchvision
 sentencepiece
-sacremoses
+gdown
