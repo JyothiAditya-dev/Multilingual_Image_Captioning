@@ -1,0 +1,44 @@
+name: Project checks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  captioning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: python -m pip install -r requirements.txt
+      - run: python -m compileall -q app.py inference.py train.py extract_features.py translator.py
+      - name: Check the Streamlit startup and decoder input
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from PIL import Image
+          from streamlit.testing.v1 import AppTest
+
+          app = AppTest.from_file("app.py", default_timeout=90).run()
+          assert not app.exception, app.exception
+          assert app.title[0].value == "Multilingual Image Captioning System"
+
+          from app import extract_features
+
+          class Encoder:
+              input_shape = (None, 224, 224, 3)
+
+              def predict(self, image, verbose):
+                  assert image.shape == (1, 224, 224, 3)
+                  assert image.dtype == np.float32
+                  return np.zeros((1, 1280), dtype=np.float32)
+
+          features = extract_features(Image.new("L", (16, 16)), Encoder(), lambda image: image)
+          assert features.shape == (1, 1280)
+          PY
