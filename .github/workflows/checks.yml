@@ -21,6 +21,11 @@ jobs:
       - name: Check the Streamlit startup and decoder input
         run: |
           python - <<'PY'
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          from unittest.mock import patch
+          from zipfile import ZipFile
+
           import numpy as np
           from PIL import Image
           from streamlit.testing.v1 import AppTest
@@ -29,7 +34,7 @@ jobs:
           assert not app.exception, app.exception
           assert app.title[0].value == "Multilingual Image Captioning System"
 
-          from app import extract_features
+          from inference import ensure_model_files, extract_features
 
           class Encoder:
               input_shape = (None, 224, 224, 3)
@@ -41,4 +46,34 @@ jobs:
 
           features = extract_features(Image.new("L", (16, 16)), Encoder(), lambda image: image)
           assert features.shape == (1, 1280)
+
+          def fake_download(url, output, quiet):
+              with ZipFile(output, "w") as archive:
+                  archive.writestr("nested/caption_model.h5", "model fixture")
+                  archive.writestr("nested/tokenizer.pkl", "tokenizer fixture")
+                  archive.writestr("../unrelated", "should not be extracted")
+              return output
+
+          with TemporaryDirectory() as directory:
+              models = Path(directory) / "models"
+              with patch("inference.gdown.download", side_effect=fake_download) as download:
+                  ensure_model_files(models)
+                  ensure_model_files(models)
+              download.assert_called_once()
+              assert sorted(path.name for path in models.iterdir()) == ["caption_model.h5", "tokenizer.pkl"]
+              assert list(Path(directory).iterdir()) == [models]
+          PY
+      - name: Test the published caption model bundle
+        timeout-minutes: 3
+        run: |
+          python - <<'PY'
+          from PIL import Image
+
+          from inference import extract_features, generate_caption, load_caption_assets, load_feature_extractor
+
+          model, tokenizer = load_caption_assets()
+          encoder, preprocess = load_feature_extractor(model.inputs[0].shape[-1])
+          features = extract_features(Image.new("RGB", (224, 224), color="white"), encoder, preprocess)
+          caption = generate_caption(model, tokenizer, features)
+          assert isinstance(caption, str)
           PY

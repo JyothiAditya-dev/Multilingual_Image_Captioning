@@ -4,7 +4,7 @@
 This project generates captions for images using a trained deep learning model and translates the captions into Hindi and Telugu.
 
 It uses:
-- CNN + LSTM for caption generation
+- EfficientNet image features and a Transformer decoder for caption generation
 - HuggingFace translation models for Hindi and Telugu
 - Streamlit for user interface
 
@@ -56,7 +56,7 @@ Install requirements:
 
 ## Run Caption Generator
 
-python inference.py
+python inference.py path/to/image.jpg
 
 ---
 
@@ -79,8 +79,8 @@ TensorFlow
 PyTorch  
 Transformers  
 Streamlit  
-CNN  
-LSTM  
+EfficientNet  
+Transformer  
 
 ---
 
