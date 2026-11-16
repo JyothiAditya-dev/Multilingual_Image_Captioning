@@ -1,108 +1,134 @@
+import argparse
 import os
 import pickle
+import zipfile
+from pathlib import Path
+from shutil import copyfileobj
+from tempfile import TemporaryDirectory
+
+import gdown
 import numpy as np
-
-import tensorflow as tf
-
-from tensorflow.keras.models import load_model
+from gdown.exceptions import FileURLRetrievalError
+from PIL import Image
+from tensorflow.keras.applications import efficientnet, inception_v3
+from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
+from transformers import BlipForConditionalGeneration, BlipProcessor
 
-from tensorflow.keras.applications.efficientnet import EfficientNetB0, preprocess_input
-from tensorflow.keras.preprocessing.image import load_img, img_to_array
-
-
-# Paths
-MODEL_PATH = "models/caption_model.h5"
-TOKENIZER_PATH = "models/tokenizer.pkl"
-
-IMAGE_PATH = "test.jpg"   # change to your test image
+MODEL_DIR = Path(__file__).resolve().parent / "models"
+PUBLIC_CAPTION_MODEL = "Salesforce/blip-image-captioning-base"
+MODEL_FILES = ("caption_model.h5", "tokenizer.pkl")
 
 
-# Parameters
-MAX_LENGTH = 34
-EMBED_DIM = 256
+def ensure_model_files(model_dir=MODEL_DIR, archive_url=None):
+    missing = [name for name in MODEL_FILES if not (model_dir / name).is_file()]
+    if not missing:
+        return
+
+    if not archive_url:
+        raise RuntimeError(f"Place caption_model.h5 and tokenizer.pkl in {model_dir}.")
+
+    model_dir.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(dir=model_dir) as temp:
+        staging = Path(temp)
+        archive = staging / "models.zip"
+        try:
+            if not gdown.download(archive_url, str(archive), quiet=True):
+                raise OSError("Google Drive did not return a file.")
+
+            with zipfile.ZipFile(archive) as bundle:
+                for name in missing:
+                    entries = [entry for entry in bundle.namelist() if Path(entry).name == name]
+                    if len(entries) != 1:
+                        raise ValueError(f"The archive must contain exactly one {name}.")
+                    with bundle.open(entries[0]) as source, (staging / name).open("wb") as target:
+                        copyfileobj(source, target)
+        except (OSError, ValueError, zipfile.BadZipFile, FileURLRetrievalError) as error:
+            raise RuntimeError(
+                f"Could not download the model bundle. Place caption_model.h5 and tokenizer.pkl in {model_dir}."
+            ) from error
+
+        for name in missing:
+            (staging / name).replace(model_dir / name)
 
 
-# Load tokenizer
-with open(TOKENIZER_PATH, "rb") as f:
-    tokenizer = pickle.load(f)
+def load_caption_assets(model_dir=MODEL_DIR):
+    ensure_model_files(model_dir, os.environ.get("CAPTION_MODEL_ARCHIVE_URL"))
+    with (model_dir / "tokenizer.pkl").open("rb") as source:
+        tokenizer = pickle.load(source)
+    model = load_model(model_dir / "caption_model.h5", compile=False)
+    return model, tokenizer
 
 
-# Load model
-model = load_model(MODEL_PATH)
+def load_feature_extractor(feature_size):
+    if feature_size == 1280:
+        base_model = efficientnet.EfficientNetB0(weights="imagenet")
+        preprocess = efficientnet.preprocess_input
+    elif feature_size == 2048:
+        base_model = inception_v3.InceptionV3(weights="imagenet")
+        preprocess = inception_v3.preprocess_input
+    else:
+        raise ValueError(f"Unsupported caption model feature size: {feature_size}")
+
+    return Model(base_model.input, base_model.layers[-2].output), preprocess
 
 
-# Load EfficientNet encoder
-base_model = EfficientNetB0(weights="imagenet")
-
-encoder = tf.keras.Model(
-    base_model.input,
-    base_model.layers[-2].output
-)
+def extract_features(image, model, preprocess):
+    _, height, width, _ = model.input_shape
+    image = image.convert("RGB").resize((width, height))
+    batch = preprocess(np.expand_dims(np.asarray(image, dtype=np.float32), axis=0))
+    return model.predict(batch, verbose=0)
 
 
-# Extract features from image
-def extract_feature(image_path):
-
-    image = load_img(image_path, target_size=(224, 224))
-
-    image = img_to_array(image)
-
-    image = np.expand_dims(image, axis=0)
-
-    image = preprocess_input(image)
-
-    feature = encoder.predict(image, verbose=0)
-
-    return feature
-
-
-# Convert index to word
-def idx_to_word(index, tokenizer):
-
-    for word, idx in tokenizer.word_index.items():
-
-        if idx == index:
-
-            return word
-
-    return None
-
-
-# Generate caption
-def generate_caption(model, tokenizer, feature):
-
-    in_text = "startseq"
-
-    for i in range(MAX_LENGTH):
-
-        sequence = tokenizer.texts_to_sequences([in_text])[0]
-
-        sequence = pad_sequences([sequence], maxlen=MAX_LENGTH)
-
-        yhat = model.predict([feature, sequence], verbose=0)
-
-        yhat = np.argmax(yhat)
-
-        word = idx_to_word(yhat, tokenizer)
-
-        if word is None:
+def generate_caption(model, tokenizer, features):
+    max_length = model.inputs[1].shape[-1]
+    words = ["startseq"]
+    for _ in range(max_length):
+        tokens = tokenizer.texts_to_sequences([" ".join(words)])
+        sequence = pad_sequences(tokens, maxlen=max_length)
+        prediction = model.predict([features, sequence], verbose=0)
+        word = tokenizer.index_word.get(int(np.argmax(prediction[0])))
+        if word is None or word == "endseq":
             break
-
-        in_text += " " + word
-
-        if word == "endseq":
-            break
-
-    caption = in_text.replace("startseq", "").replace("endseq", "")
-
-    return caption.strip()
+        words.append(word)
+    return " ".join(words[1:])
 
 
-# Run inference
-feature = extract_feature(IMAGE_PATH)
+def load_captioner():
+    if all((MODEL_DIR / name).is_file() for name in MODEL_FILES) or os.environ.get("CAPTION_MODEL_ARCHIVE_URL"):
+        model, tokenizer = load_caption_assets()
+        encoder, preprocess = load_feature_extractor(model.inputs[0].shape[-1])
 
-caption = generate_caption(model, tokenizer, feature)
+        def caption(image):
+            features = extract_features(image, encoder, preprocess)
+            return generate_caption(model, tokenizer, features)
 
-print("\nGenerated Caption:")
-print(caption)
+        return caption
+
+    processor = BlipProcessor.from_pretrained(PUBLIC_CAPTION_MODEL)
+    model = BlipForConditionalGeneration.from_pretrained(PUBLIC_CAPTION_MODEL).eval()
+
+    def caption(image):
+        inputs = processor(images=image.convert("RGB"), return_tensors="pt")
+        tokens = model.generate(**inputs, max_new_tokens=32)
+        return processor.decode(tokens[0], skip_special_tokens=True).strip()
+
+    return caption
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate an English caption for an image.")
+    parser.add_argument("image", type=Path, help="Path to an image")
+    args = parser.parse_args()
+
+    try:
+        with Image.open(args.image) as image:
+            caption = load_captioner()(image)
+    except (OSError, RuntimeError, ValueError) as error:
+        parser.exit(1, f"{error}\n")
+
+    print(caption)
+
+
+if __name__ == "__main__":
+    main()

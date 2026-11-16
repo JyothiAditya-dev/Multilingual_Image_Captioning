@@ -4,7 +4,7 @@
 This project generates captions for images using a trained deep learning model and translates the captions into Hindi and Telugu.
 
 It uses:
-- CNN + LSTM for caption generation
+- EfficientNet image features and a Transformer decoder for caption generation
 - HuggingFace translation models for Hindi and Telugu
 - Streamlit for user interface
 
@@ -34,15 +34,11 @@ extract_features.py → feature extraction
 
 ---
 
-## Model Download
+## Caption models
 
-Download trained model from Google Drive:
+The app and CLI download the [Salesforce BLIP base model](https://huggingface.co/Salesforce/blip-image-captioning-base) from Hugging Face on first use. Images are processed locally. The language models also download on first use.
 
-PASTE YOUR GOOGLE DRIVE LINK HERE
-
-After download, place file in:
-
-models/caption_model.h5
+To use your own trained Keras model, put `caption_model.h5` and its matching `tokenizer.pkl` in `models/`. You can also set `CAPTION_MODEL_ARCHIVE_URL` to a trusted ZIP archive that contains both files. Only use model and tokenizer files from sources you trust.
 
 ---
 
@@ -50,13 +46,13 @@ models/caption_model.h5
 
 Install requirements:
 
-pip install tensorflow torch torchvision transformers streamlit pillow numpy
+`python -m pip install -r requirements.txt`
 
 ---
 
 ## Run Caption Generator
 
-python inference.py
+python inference.py path/to/image.jpg
 
 ---
 
@@ -79,8 +75,8 @@ TensorFlow
 PyTorch  
 Transformers  
 Streamlit  
-CNN  
-LSTM  
+EfficientNet  
+Transformer  
 
 ---
 

@@ -14,7 +14,8 @@ from tensorflow.keras.layers import (
     Embedding,
     LayerNormalization,
     MultiHeadAttention,
-    GlobalAveragePooling1D
+    GlobalAveragePooling1D,
+    Reshape
 )
 
 from tensorflow.keras.models import Model
@@ -78,14 +79,11 @@ def load_captions(filename):
             if len(line) == 0:
                 continue
 
-            # Split only first space
-            split_index = line.find(" ")
-
-            if split_index == -1:
+            fields = line.split(maxsplit=1)
+            if len(fields) != 2:
                 continue
 
-            image_part = line[:split_index]
-            caption = line[split_index + 1:]
+            image_part, caption = fields
 
             # Remove #0 and .jpg
             img_id = image_part.split("#")[0]
@@ -186,7 +184,7 @@ print("Training samples:", len(X1))
 
 def transformer_block(x, encoder_output):
 
-    encoder_output = tf.expand_dims(encoder_output, axis=1)
+    encoder_output = Reshape((1, EMBED_DIM))(encoder_output)
 
     attention1 = MultiHeadAttention(
         num_heads=NUM_HEADS,

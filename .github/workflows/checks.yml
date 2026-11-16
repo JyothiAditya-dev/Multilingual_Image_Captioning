@@ -1,0 +1,89 @@
+name: Project checks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  captioning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: python -m pip install -r requirements.txt
+      - run: python -m compileall -q app.py inference.py train.py extract_features.py translator.py
+      - name: Check the Streamlit startup and decoder input
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          from unittest.mock import patch
+          from zipfile import ZipFile
+
+          import numpy as np
+          from PIL import Image
+          from streamlit.testing.v1 import AppTest
+
+          app = AppTest.from_file("app.py", default_timeout=90).run()
+          assert not app.exception, app.exception
+          assert app.title[0].value == "Multilingual Image Captioning System"
+
+          from inference import ensure_model_files, extract_features
+
+          class Encoder:
+              input_shape = (None, 224, 224, 3)
+
+              def predict(self, image, verbose):
+                  assert image.shape == (1, 224, 224, 3)
+                  assert image.dtype == np.float32
+                  return np.zeros((1, 1280), dtype=np.float32)
+
+          features = extract_features(Image.new("L", (16, 16)), Encoder(), lambda image: image)
+          assert features.shape == (1, 1280)
+
+          def fake_download(url, output, quiet):
+              with ZipFile(output, "w") as archive:
+                  archive.writestr("nested/caption_model.h5", "model fixture")
+                  archive.writestr("nested/tokenizer.pkl", "tokenizer fixture")
+                  archive.writestr("../unrelated", "should not be extracted")
+              return output
+
+          with TemporaryDirectory() as directory:
+              models = Path(directory) / "models"
+              with patch("inference.gdown.download", side_effect=fake_download) as download:
+                  ensure_model_files(models, archive_url="https://example.com/models.zip")
+                  ensure_model_files(models, archive_url="https://example.com/models.zip")
+              download.assert_called_once()
+              assert sorted(path.name for path in models.iterdir()) == ["caption_model.h5", "tokenizer.pkl"]
+              assert list(Path(directory).iterdir()) == [models]
+          PY
+      - name: Generate and translate a caption with the public models
+        timeout-minutes: 8
+        env:
+          HF_HUB_DISABLE_XET: "1"
+          OMP_NUM_THREADS: "2"
+        run: |
+          python - <<'PY'
+          from PIL import Image, ImageDraw
+
+          from app import load_translators
+          from inference import load_captioner
+
+          image = Image.new("RGB", (224, 224), color="white")
+          ImageDraw.Draw(image).ellipse((42, 42, 182, 182), fill="red")
+          english = load_captioner()(image)
+          assert english.strip(), "Caption was empty"
+
+          hindi_model, telugu_model = load_translators()
+          hindi = hindi_model(english)[0]["translation_text"]
+          telugu = telugu_model(f">>tel<< {english}")[0]["translation_text"]
+          assert hindi.strip() and telugu.strip(), (hindi, telugu)
+          assert any("\u0900" <= letter <= "\u097f" for letter in hindi), hindi
+          assert any("\u0c00" <= letter <= "\u0c7f" for letter in telugu), telugu
+          PY

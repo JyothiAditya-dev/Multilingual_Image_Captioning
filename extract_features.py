@@ -43,6 +43,7 @@ for img_name in tqdm(os.listdir(IMAGE_PATH)):
     features[img_id] = feature.flatten()
 
 # Save features
+os.makedirs(os.path.dirname(FEATURE_PATH), exist_ok=True)
 with open(FEATURE_PATH, "wb") as f:
     pickle.dump(features, f)
 
