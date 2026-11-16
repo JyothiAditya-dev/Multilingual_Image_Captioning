@@ -38,11 +38,11 @@ extract_features.py → feature extraction
 
 Download trained model from Google Drive:
 
-PASTE YOUR GOOGLE DRIVE LINK HERE
+[Download the model archive](https://drive.google.com/file/d/1gOvW_z0Nr-fX4bZt7Nb7xkvmfuqKxRmy/view)
 
 After download, place file in:
 
-models/caption_model.h5
+`models/caption_model.h5` and `models/tokenizer.pkl`
 
 ---
 
@@ -50,7 +50,7 @@ models/caption_model.h5
 
 Install requirements:
 
-pip install tensorflow torch torchvision transformers streamlit pillow numpy
+`python -m pip install -r requirements.txt`
 
 ---
 

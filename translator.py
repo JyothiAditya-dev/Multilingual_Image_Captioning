@@ -27,7 +27,7 @@ def translate(text, language):
 
     elif language == "Telugu":
 
-        inputs = tokenizer_te(text, return_tensors="pt", padding=True)
+        inputs = tokenizer_te(f">>tel<< {text}", return_tensors="pt", padding=True)
         outputs = model_te.generate(**inputs)
         translated = tokenizer_te.decode(outputs[0], skip_special_tokens=True)
         return translated

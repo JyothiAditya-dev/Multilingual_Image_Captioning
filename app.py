@@ -7,7 +7,7 @@ import gdown
 import zipfile
 from PIL import Image
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.applications.inception_v3 import InceptionV3, preprocess_input
+from tensorflow.keras.applications import efficientnet, inception_v3
 from tensorflow.keras.models import Model
 from transformers import pipeline
 
@@ -24,7 +24,7 @@ def download_models():
     file_id = "1gOvW_z0Nr-fX4bZt7Nb7xkvmfuqKxRmy"
     zip_path = "models/models.zip"
 
-    if not os.path.exists("models/tokenizer.pkl"):
+    if not all(os.path.isfile(f"models/{name}") for name in ("tokenizer.pkl", "caption_model.h5")):
 
         st.write("Downloading model files...")
 
@@ -37,7 +37,6 @@ def download_models():
         st.write("Models downloaded successfully")
 
 
-download_models()
 
 # =========================
 # Load tokenizer
@@ -59,7 +58,7 @@ def load_tokenizer():
 @st.cache_resource
 def load_caption_model():
 
-    model = tf.keras.models.load_model("models/caption_model.h5")
+    model = tf.keras.models.load_model("models/caption_model.h5", compile=False)
 
     return model
 
@@ -69,12 +68,17 @@ def load_caption_model():
 # =========================
 
 @st.cache_resource
-def load_feature_extractor():
+def load_feature_extractor(feature_size):
+    if feature_size == 1280:
+        encoder = efficientnet
+        base_model = encoder.EfficientNetB0(weights="imagenet")
+    elif feature_size == 2048:
+        encoder = inception_v3
+        base_model = encoder.InceptionV3(weights="imagenet")
+    else:
+        raise ValueError(f"Unsupported caption model feature size: {feature_size}")
 
-    base_model = InceptionV3(weights="imagenet")
-    model = Model(base_model.input, base_model.layers[-2].output)
-
-    return model
+    return Model(base_model.input, base_model.layers[-2].output), encoder.preprocess_input
 
 
 # =========================
@@ -85,12 +89,14 @@ def load_feature_extractor():
 def load_translators():
 
     translator_hi = pipeline(
-        "translation_en_to_hi",
+        "translation",
+        framework="pt",
         model="Helsinki-NLP/opus-mt-en-hi"
     )
 
     translator_te = pipeline(
         "translation",
+        framework="pt",
         model="Helsinki-NLP/opus-mt-en-mul"
     )
 
@@ -132,17 +138,10 @@ def generate_caption(model, tokenizer, photo, max_length=34):
 # Extract image features
 # =========================
 
-def extract_features(image, model):
-
-    image = image.resize((299, 299))
-    image = np.array(image)
-
-    if image.shape[-1] == 4:
-        image = image[..., :3]
-
-    image = np.expand_dims(image, axis=0)
-    image = preprocess_input(image)
-
+def extract_features(image, model, preprocess_input):
+    _, height, width, _ = model.input_shape
+    image = image.convert("RGB").resize((width, height))
+    image = preprocess_input(np.expand_dims(np.asarray(image, dtype=np.float32), axis=0))
     feature = model.predict(image, verbose=0)
 
     return feature
@@ -156,7 +155,7 @@ def translate(text, translator_hi, translator_te):
 
     hindi = translator_hi(text)[0]["translation_text"]
 
-    telugu = translator_te(text)[0]["translation_text"]
+    telugu = translator_te(f">>tel<< {text}")[0]["translation_text"]
 
     return hindi, telugu
 
@@ -174,16 +173,17 @@ uploaded_file = st.file_uploader("Choose an image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
 
-    image = Image.open(uploaded_file)
+    download_models()
+    image = Image.open(uploaded_file).convert("RGB")
 
     st.image(image, caption="Uploaded Image", use_column_width=True)
 
     tokenizer = load_tokenizer()
     caption_model = load_caption_model()
-    feature_model = load_feature_extractor()
+    feature_model, preprocess_input = load_feature_extractor(caption_model.inputs[0].shape[-1])
     translator_hi, translator_te = load_translators()
 
-    feature = extract_features(image, feature_model)
+    feature = extract_features(image, feature_model, preprocess_input)
 
     english_caption = generate_caption(caption_model, tokenizer, feature)
 
