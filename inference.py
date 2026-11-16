@@ -1,4 +1,5 @@
 import argparse
+import os
 import pickle
 import zipfile
 from pathlib import Path
@@ -12,23 +13,27 @@ from PIL import Image
 from tensorflow.keras.applications import efficientnet, inception_v3
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
+from transformers import BlipForConditionalGeneration, BlipProcessor
 
 MODEL_DIR = Path(__file__).resolve().parent / "models"
-MODEL_URL = "https://drive.google.com/uc?id=1gOvW_z0Nr-fX4bZt7Nb7xkvmfuqKxRmy"
+PUBLIC_CAPTION_MODEL = "Salesforce/blip-image-captioning-base"
 MODEL_FILES = ("caption_model.h5", "tokenizer.pkl")
 
 
-def ensure_model_files(model_dir=MODEL_DIR):
+def ensure_model_files(model_dir=MODEL_DIR, archive_url=None):
     missing = [name for name in MODEL_FILES if not (model_dir / name).is_file()]
     if not missing:
         return
+
+    if not archive_url:
+        raise RuntimeError(f"Place caption_model.h5 and tokenizer.pkl in {model_dir}.")
 
     model_dir.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=model_dir) as temp:
         staging = Path(temp)
         archive = staging / "models.zip"
         try:
-            if not gdown.download(MODEL_URL, str(archive), quiet=True):
+            if not gdown.download(archive_url, str(archive), quiet=True):
                 raise OSError("Google Drive did not return a file.")
 
             with zipfile.ZipFile(archive) as bundle:
@@ -48,7 +53,7 @@ def ensure_model_files(model_dir=MODEL_DIR):
 
 
 def load_caption_assets(model_dir=MODEL_DIR):
-    ensure_model_files(model_dir)
+    ensure_model_files(model_dir, os.environ.get("CAPTION_MODEL_ARCHIVE_URL"))
     with (model_dir / "tokenizer.pkl").open("rb") as source:
         tokenizer = pickle.load(source)
     model = load_model(model_dir / "caption_model.h5", compile=False)
@@ -89,6 +94,28 @@ def generate_caption(model, tokenizer, features):
     return " ".join(words[1:])
 
 
+def load_captioner():
+    if all((MODEL_DIR / name).is_file() for name in MODEL_FILES) or os.environ.get("CAPTION_MODEL_ARCHIVE_URL"):
+        model, tokenizer = load_caption_assets()
+        encoder, preprocess = load_feature_extractor(model.inputs[0].shape[-1])
+
+        def caption(image):
+            features = extract_features(image, encoder, preprocess)
+            return generate_caption(model, tokenizer, features)
+
+        return caption
+
+    processor = BlipProcessor.from_pretrained(PUBLIC_CAPTION_MODEL)
+    model = BlipForConditionalGeneration.from_pretrained(PUBLIC_CAPTION_MODEL).eval()
+
+    def caption(image):
+        inputs = processor(images=image.convert("RGB"), return_tensors="pt")
+        tokens = model.generate(**inputs, max_new_tokens=32)
+        return processor.decode(tokens[0], skip_special_tokens=True).strip()
+
+    return caption
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate an English caption for an image.")
     parser.add_argument("image", type=Path, help="Path to an image")
@@ -96,10 +123,7 @@ def main():
 
     try:
         with Image.open(args.image) as image:
-            model, tokenizer = load_caption_assets()
-            encoder, preprocess = load_feature_extractor(model.inputs[0].shape[-1])
-            features = extract_features(image, encoder, preprocess)
-            caption = generate_caption(model, tokenizer, features)
+            caption = load_captioner()(image)
     except (OSError, RuntimeError, ValueError) as error:
         parser.exit(1, f"{error}\n")
 

@@ -34,15 +34,11 @@ extract_features.py → feature extraction
 
 ---
 
-## Model Download
+## Caption models
 
-Download trained model from Google Drive:
+The app and CLI download the [Salesforce BLIP base model](https://huggingface.co/Salesforce/blip-image-captioning-base) from Hugging Face on first use. Images are processed locally. The language models also download on first use.
 
-[Download the model archive](https://drive.google.com/file/d/1gOvW_z0Nr-fX4bZt7Nb7xkvmfuqKxRmy/view)
-
-After download, place file in:
-
-`models/caption_model.h5` and `models/tokenizer.pkl`
+To use your own trained Keras model, put `caption_model.h5` and its matching `tokenizer.pkl` in `models/`. You can also set `CAPTION_MODEL_ARCHIVE_URL` to a trusted ZIP archive that contains both files. Only use model and tokenizer files from sources you trust.
 
 ---
 

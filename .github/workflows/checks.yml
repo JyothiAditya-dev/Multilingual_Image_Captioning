@@ -57,23 +57,33 @@ jobs:
           with TemporaryDirectory() as directory:
               models = Path(directory) / "models"
               with patch("inference.gdown.download", side_effect=fake_download) as download:
-                  ensure_model_files(models)
-                  ensure_model_files(models)
+                  ensure_model_files(models, archive_url="https://example.com/models.zip")
+                  ensure_model_files(models, archive_url="https://example.com/models.zip")
               download.assert_called_once()
               assert sorted(path.name for path in models.iterdir()) == ["caption_model.h5", "tokenizer.pkl"]
               assert list(Path(directory).iterdir()) == [models]
           PY
-      - name: Test the published caption model bundle
-        timeout-minutes: 3
+      - name: Generate and translate a caption with the public models
+        timeout-minutes: 8
+        env:
+          HF_HUB_DISABLE_XET: "1"
+          OMP_NUM_THREADS: "2"
         run: |
           python - <<'PY'
-          from PIL import Image
+          from PIL import Image, ImageDraw
 
-          from inference import extract_features, generate_caption, load_caption_assets, load_feature_extractor
+          from app import load_translators
+          from inference import load_captioner
 
-          model, tokenizer = load_caption_assets()
-          encoder, preprocess = load_feature_extractor(model.inputs[0].shape[-1])
-          features = extract_features(Image.new("RGB", (224, 224), color="white"), encoder, preprocess)
-          caption = generate_caption(model, tokenizer, features)
-          assert isinstance(caption, str)
+          image = Image.new("RGB", (224, 224), color="white")
+          ImageDraw.Draw(image).ellipse((42, 42, 182, 182), fill="red")
+          english = load_captioner()(image)
+          assert english.strip(), "Caption was empty"
+
+          hindi_model, telugu_model = load_translators()
+          hindi = hindi_model(english)[0]["translation_text"]
+          telugu = telugu_model(f">>tel<< {english}")[0]["translation_text"]
+          assert hindi.strip() and telugu.strip(), (hindi, telugu)
+          assert any("\u0900" <= letter <= "\u097f" for letter in hindi), hindi
+          assert any("\u0c00" <= letter <= "\u0c7f" for letter in telugu), telugu
           PY

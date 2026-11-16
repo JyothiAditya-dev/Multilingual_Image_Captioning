@@ -2,14 +2,12 @@ import streamlit as st
 from PIL import Image
 from transformers import pipeline
 
-from inference import extract_features, generate_caption, load_caption_assets, load_feature_extractor
+from inference import load_captioner
 
 
 @st.cache_resource
-def load_models():
-    model, tokenizer = load_caption_assets()
-    encoder, preprocess = load_feature_extractor(model.inputs[0].shape[-1])
-    return model, tokenizer, encoder, preprocess
+def get_captioner():
+    return load_captioner()
 
 
 @st.cache_resource
@@ -30,9 +28,7 @@ def main():
         image = Image.open(uploaded_file).convert("RGB")
         st.image(image, caption="Uploaded Image", use_container_width=True)
         with st.spinner("Generating the English caption…"):
-            model, tokenizer, encoder, preprocess = load_models()
-            features = extract_features(image, encoder, preprocess)
-            english = generate_caption(model, tokenizer, features)
+            english = get_captioner()(image)
     except (OSError, RuntimeError, ValueError) as error:
         st.error(f"Could not generate a caption. {error}")
         return
